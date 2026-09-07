@@ -1,0 +1,22 @@
+[package]
+name = "uniseal"
+version = "0.2.0"
+edition = "2024"
+description = "File vault bound to Logitech Unifying receivers (Rust + hidapi + SDL2)"
+license = "GPL-3.0-or-later"
+
+[dependencies]
+hidapi = "2"
+sdl2 = { version = "0.38", features = ["ttf"] }
+rfd = "0.17"
+clap = { version = "4", features = ["derive"] }
+chacha20poly1305 = "0.11"
+hkdf = "0.13"
+sha2 = "0.11"
+argon2 = "0.6"
+zeroize = "1"
+getrandom = "0.4"
+rpassword = "7"
+
+[target.'cfg(windows)'.dependencies]
+sdl2 = { version = "0.38", features = ["ttf", "bundled", "static-link"] }

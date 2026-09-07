@@ -1,0 +1,4 @@
+/target/
+*.open
+.*.uniseal-*.tmp
+.DS_Store

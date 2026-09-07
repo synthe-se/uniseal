@@ -1,0 +1,4 @@
+# Homebrew (Apple Silicon): where to find SDL2/SDL2_ttf at link time.
+# Requires: brew install sdl2 sdl2_ttf pkg-config
+[target.aarch64-apple-darwin]
+rustflags = ["-L", "/opt/homebrew/lib"]
