@@ -276,6 +276,23 @@ fn read_once(api: &HidApi) -> Result<Fingerprint, FpError> {
     Ok(fp)
 }
 
+/// Which receivers are plugged right now (`DONGLE_*` mask), from a fresh
+/// USB enumeration only: no HID++ traffic, cheap enough to poll.
+pub fn presence(api: &mut HidApi) -> u8 {
+    let _ = api.refresh_devices();
+    let mut mask = 0;
+    for d in api.device_list() {
+        if d.vendor_id() == hid::LOGITECH_VID {
+            match d.product_id() {
+                hid::TI_PID => mask |= DONGLE_TI,
+                hid::NANO_PID => mask |= DONGLE_NANO,
+                _ => {}
+            }
+        }
+    }
+    mask
+}
+
 /// Read the fingerprint from any combination (TI only, Nano only, both).
 /// Two consecutive reads must agree on the full material, else `Unstable`.
 pub fn collect(api: &HidApi) -> Result<Fingerprint, FpError> {

@@ -5,6 +5,8 @@
 //! HID and Argon2 work run in a worker thread over mpsc; file dialogs
 //! (rfd) run on the UI thread. Drop a file on the window to select it;
 //! a `.vault` shows its keyslots and the primary action becomes Unlock.
+//! Receiver presence is polled every two seconds by USB enumeration alone;
+//! a change triggers a full re-read, so unplugging shows up on its own.
 //! `UNISEAL_SMOKE=1` auto-quits after a few seconds (headless CI check);
 //! `UNISEAL_PRIVATE=1` masks serials, key ids and device names, for
 //! screenshots.
@@ -332,6 +334,8 @@ struct SlotView {
 
 enum Job {
     Refresh,
+    /// Cheap presence check; re-reads only when the plugged set changed.
+    Poll,
     Inspect { path: PathBuf, fp: Option<Fingerprint> },
     Lock { path: PathBuf, dongle: Dongle, mode: Mode, pass: Secret },
     Unlock { path: PathBuf, fp: Option<Fingerprint>, pass: Secret },
@@ -460,13 +464,26 @@ fn worker(rx: Receiver<Job>, tx: Sender<Done>) {
             return;
         }
     };
+    let mut api = api;
     let report = |res: Result<String, String>| match res {
         Ok(s) => Done::Line(s, Level::Ok),
         Err(e) => Done::Line(e, Level::Err),
     };
+    let mut known = fingerprint::presence(&mut api);
     for job in rx {
         let _ = match job {
-            Job::Refresh => tx.send(Done::Status(Box::new(refresh(&api)))),
+            Job::Refresh => {
+                known = fingerprint::presence(&mut api);
+                tx.send(Done::Status(Box::new(refresh(&api))))
+            }
+            Job::Poll => {
+                let now = fingerprint::presence(&mut api);
+                if now == known {
+                    continue;
+                }
+                known = now;
+                tx.send(Done::Status(Box::new(refresh(&api))))
+            }
             Job::Inspect { path, fp } => tx.send(Done::Inspect(inspect(&path, fp.as_ref()))),
             Job::Lock { path, dongle, mode, pass } => tx.send(report(do_lock(&path, &dongle, mode, &pass))),
             Job::Unlock { path, fp, pass } => tx.send(report(do_unlock(&path, fp.as_ref(), &pass))),
@@ -578,6 +595,7 @@ pub fn run(preselected: Option<PathBuf>) {
     }
     let _ = tx.send(Job::Refresh);
     let started = Instant::now();
+    let mut last_poll = Instant::now();
     let pass_bytes = |p: &Zeroizing<String>| -> Secret { Zeroizing::new(p.as_bytes().to_vec()) };
 
     let mut events = sdl.event_pump().expect("events");
@@ -685,6 +703,10 @@ pub fn run(preselected: Option<PathBuf>) {
                 app.log("no dongle fingerprint: plug a receiver and Refresh", Level::Err);
             }
         }
+        if !app.busy && last_poll.elapsed() > Duration::from_secs(2) {
+            last_poll = Instant::now();
+            let _ = tx.send(Job::Poll);
+        }
         if app.path_dirty {
             app.path_dirty = false;
             let _ = tx.send(Job::Inspect { path: PathBuf::from(&app.path), fp: app.status.fp.clone() });
@@ -692,12 +714,17 @@ pub fn run(preselected: Option<PathBuf>) {
         loop {
             match rx.try_recv() {
                 Ok(Done::Status(st)) => {
+                    let was_ok = app.status.ok;
                     let ok = st.ok;
                     let detail = st.detail.clone();
                     app.bind = st.fp.as_ref().map(|f| f.occupied()).unwrap_or(0);
                     app.status = *st;
                     app.busy = false;
-                    app.log(detail, if ok { Level::Ok } else { Level::Err });
+                    match (was_ok, ok) {
+                        (true, false) => app.log("receiver unplugged", Level::Warn),
+                        (_, false) => app.log(detail, Level::Err),
+                        (_, true) => app.log(detail, Level::Ok),
+                    }
                     app.path_dirty = !app.path.is_empty();
                 }
                 Ok(Done::Inspect(slots)) => app.slots = slots,
